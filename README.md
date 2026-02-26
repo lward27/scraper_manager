@@ -13,5 +13,5 @@ docker buildx build --platform linux/amd64 . -t docker.lucas.engineering/scraper
 
 # To Push
 ```bash
-docker push docker.lucas.engineering/scraper_manager:0.4 
+docker push docker.lucas.engineering/scraper_manager:0.8
 ```
