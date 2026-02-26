@@ -37,7 +37,8 @@ def get_period(ticker: str):
         print(f"Period set to: {period}d")
         return (str(period) + 'd'), latest_date
     else:
-        return None, None
+        print(f"{ticker}: No existing data, fetching max history")
+        return 'max', None
 
 # Note - this count will still include holidays, in order to handle holidays, an additional date check
 # happens when transforming the payload.
@@ -69,69 +70,17 @@ def save_batch_history(batch_history):
 
 def transform_payload(payload: dict, ticker_name: str, latest_date) -> list:
     history_batch = []
-    latest_date = latest_date.replace(hour=0)
+    if latest_date is not None:
+        latest_date = latest_date.replace(hour=0)
 
-    for _date, _price in payload["Open"].items():
-        if(datetime.fromisoformat((_date[:19])) > latest_date):
-            new_history = {
-                "price_type": "Open",
-                "datetime": _date,
-                "price": _price,
-                "ticker_name": ticker_name
-            }
-            history_batch.append(new_history)
-    for _date, _price in payload["High"].items():
-        if(datetime.fromisoformat((_date[:19])) > latest_date):
-            new_history = {
-                "price_type": "High",
-                "datetime": _date,
-                "price": _price,
-                "ticker_name": ticker_name
-            }
-            history_batch.append(new_history)
-    for _date, _price in payload["Low"].items():
-        if(datetime.fromisoformat((_date[:19])) > latest_date):
-            new_history = {
-                "price_type": "Low",
-                "datetime": _date,
-                "price": _price,
-                "ticker_name": ticker_name
-            }
-            history_batch.append(new_history)
-    for _date, _price in payload["Close"].items():
-        if(datetime.fromisoformat((_date[:19])) > latest_date):
-            new_history = {
-                "price_type": "Close",
-                "datetime": _date,
-                "price": _price,
-                "ticker_name": ticker_name
-            }
-            history_batch.append(new_history)
-    for _date, _price in payload["Volume"].items():
-        if(datetime.fromisoformat((_date[:19])) > latest_date):
-            new_history = {
-                "price_type": "Volume",
-                "datetime": _date,
-                "price": _price,
-                "ticker_name": ticker_name
-            }
-            history_batch.append(new_history)
-    for _date, _price in payload["Dividends"].items():
-        if(datetime.fromisoformat((_date[:19])) > latest_date):
-            new_history = {
-                "price_type": "Dividends",
-                "datetime": _date,
-                "price": _price,
-                "ticker_name": ticker_name
-            }
-            history_batch.append(new_history)
-    for _date, _price in payload["Stock Splits"].items():
-        if(datetime.fromisoformat((_date[:19])) > latest_date):
-            new_history = {
-                "price_type": "Stock Splits",
-                "datetime": _date,
-                "price": _price,
-                "ticker_name": ticker_name
-            }
-            history_batch.append(new_history)
+    for price_type in ["Open", "High", "Low", "Close", "Volume", "Dividends", "Stock Splits"]:
+        for _date, _price in payload[price_type].items():
+            parsed_date = datetime.fromisoformat(_date[:19])
+            if latest_date is None or parsed_date > latest_date:
+                history_batch.append({
+                    "price_type": price_type,
+                    "datetime": _date,
+                    "price": _price,
+                    "ticker_name": ticker_name
+                })
     return history_batch
