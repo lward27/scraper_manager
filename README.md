@@ -8,10 +8,10 @@ a beep boop!
 
 # To build
 ```bash
-docker buildx build --platform linux/amd64 . -t docker.lucas.engineering/scraper_manager:0.4
+docker build --platform linux/amd64 . -t registry.lucas.engineering/scraper_manager:1.0 
 ```
 
 # To Push
 ```bash
-docker push docker.lucas.engineering/scraper_manager:0.8
+docker push registry.lucas.engineering/scraper_manager:1.0
 ```
