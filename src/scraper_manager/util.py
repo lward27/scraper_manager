@@ -1,86 +1,61 @@
 import requests
-import json
-from datetime import datetime, timedelta
+from datetime import date, timedelta
 from scraper_manager.config import DATABASE_SERVICE_URL, YFINANCE_SERVICE_URL
 
-REQUEST_TIMEOUT_SECONDS = 10
+REQUEST_TIMEOUT = 30
+BATCH_TIMEOUT = 60
 
-# get tickers from db
-def get_tickers(offset: int, limit: int):
+
+def get_tickers_needing_update() -> list[dict]:
+    """Single DB call: returns all tickers whose last price_history date is before yesterday."""
+    r = requests.get(f"{DATABASE_SERVICE_URL}/tickers/update-status", timeout=REQUEST_TIMEOUT)
+    r.raise_for_status()
+    yesterday = date.today() - timedelta(days=1)
+    return [t for t in r.json() if date.fromisoformat(t["last_date"]) < yesterday]
+
+
+def fetch_chunk(ticker: str, start: date, end: date) -> dict | None:
+    """Fetch one date-range window from yfinance. Returns raw OHLCV dict or None on 404."""
     r = requests.get(
-        f"{DATABASE_SERVICE_URL}/tickers?offset={offset}&limit={limit}",
-        timeout=REQUEST_TIMEOUT_SECONDS,
+        f"{YFINANCE_SERVICE_URL}/history",
+        params={"ticker_name": ticker, "start": str(start), "end": str(end)},
+        timeout=REQUEST_TIMEOUT,
     )
-    l = []
-    for tick in r.json():
-        l.append(tick["ticker"])
-    return l
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json()
 
-def get_ticker_count():
-    r = requests.get(
-        f"{DATABASE_SERVICE_URL}/tickers/count",
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    count = r.json()
-    return count
 
-def get_period(ticker: str):
-    r = requests.get(
-        f"{DATABASE_SERVICE_URL}/history/last_date?ticker_name={ticker}",
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    if r.json():
-        print(f"Latest Date for {ticker}: {r.json()}")
-        latest_date = datetime.fromisoformat(r.json())
-        todays_date = datetime.now()
-        period = count_weekdays(latest_date, todays_date)
-        print(f"Period set to: {period}d")
-        return (str(period) + 'd'), latest_date
-    else:
-        print(f"{ticker}: No existing data, fetching max history")
-        return 'max', None
+def transform_chunk(raw: dict, ticker_id: int) -> list[dict]:
+    """Pivot yfinance nested OHLCV dict into a flat list of row dicts for /history/batch."""
+    opens   = raw.get("Open", {})
+    highs   = raw.get("High", {})
+    lows    = raw.get("Low", {})
+    closes  = raw.get("Close", {})
+    volumes = raw.get("Volume", {})
 
-# Note - this count will still include holidays, in order to handle holidays, an additional date check
-# happens when transforming the payload.
-def count_weekdays(start_date, end_date):
-    number_of_days = (end_date - start_date).days
-    number_of_weekdays = 0
-    for i in range(number_of_days):
-        date_to_check = start_date + timedelta(days=(i+1))
-        if(date_to_check.isoweekday() <= 5):
-            number_of_weekdays += 1
-    return number_of_weekdays
+    rows = []
+    for dt_str in opens:
+        rows.append({
+            "ticker_id": ticker_id,
+            "ts":        dt_str[:10],   # trim to YYYY-MM-DD
+            "open":      opens.get(dt_str),
+            "high":      highs.get(dt_str),
+            "low":       lows.get(dt_str),
+            "close":     closes.get(dt_str),
+            "volume":    volumes.get(dt_str),
+        })
+    return rows
 
-def get_history(ticker: str, period: str):
-    r = requests.get(
-        f"{YFINANCE_SERVICE_URL}/history?ticker_name={ticker}&period={period}",
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    if r.status_code != 200:
-        return "Ticker Not Found", r.status_code
-    return r.json(), r.status_code
 
-def save_batch_history(batch_history):
+def save_batch(rows: list[dict]) -> None:
+    """POST a batch of OHLCV rows to the database service."""
+    if not rows:
+        return
     r = requests.post(
         f"{DATABASE_SERVICE_URL}/history/batch",
-        json=batch_history,
-        timeout=REQUEST_TIMEOUT_SECONDS,
+        json=rows,
+        timeout=BATCH_TIMEOUT,
     )
-    return r.text, r.status_code
-
-def transform_payload(payload: dict, ticker_name: str, latest_date) -> list:
-    history_batch = []
-    if latest_date is not None:
-        latest_date = latest_date.replace(hour=0)
-
-    for price_type in ["Open", "High", "Low", "Close", "Volume", "Dividends", "Stock Splits"]:
-        for _date, _price in payload[price_type].items():
-            parsed_date = datetime.fromisoformat(_date[:19])
-            if latest_date is None or parsed_date > latest_date:
-                history_batch.append({
-                    "price_type": price_type,
-                    "datetime": _date,
-                    "price": _price,
-                    "ticker_name": ticker_name
-                })
-    return history_batch
+    r.raise_for_status()

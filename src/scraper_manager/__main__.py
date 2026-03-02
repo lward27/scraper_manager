@@ -1,106 +1,96 @@
-from scraper_manager import util
 import sys
 import time
+import threading
+from datetime import date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from scraper_manager import util
+
+CHUNK_DAYS = 90
+MAX_WORKERS = 8
+START_OF_HISTORY = date(2000, 1, 1)
+
+# Cap simultaneous yfinance calls to avoid overwhelming the wrapper
+_yfinance_semaphore = threading.Semaphore(4)
+SLEEP_BETWEEN_CHUNKS = 1.5  # seconds, inside the semaphore
 
 
-class ScrapeState:
-    def __init__(self):
-        self.is_running = False
-        self.should_stop = False
-        self.total_tickers = 0
-        self.processed_tickers = 0
-        self.current_ticker = None
-        self.last_error = None
-        self.started_at = None
-        self.completed_at = None
+def update_ticker(ticker_info: dict) -> tuple[str, int, str | None]:
+    """Fetch and store all missing price history for one ticker in 90-day chunks.
 
+    Returns (ticker_symbol, chunks_saved, error_message_or_None).
+    """
+    ticker_id  = ticker_info["ticker_id"]
+    ticker_sym = ticker_info["ticker"]
+    last_date  = date.fromisoformat(ticker_info["last_date"])
+    yesterday  = date.today() - timedelta(days=1)
 
-scrape_state = ScrapeState()
+    start = START_OF_HISTORY if last_date <= date(1900, 1, 2) else last_date + timedelta(days=1)
+    end   = yesterday
+    chunks_saved = 0
 
+    while start <= end:
+        chunk_end = min(start + timedelta(days=CHUNK_DAYS), end)
 
-def run_scrape_job():
-    """Run the scrape job synchronously"""
-    global scrape_state
+        with _yfinance_semaphore:
+            try:
+                raw = util.fetch_chunk(ticker_sym, start, chunk_end)
+            except Exception as e:
+                return ticker_sym, chunks_saved, f"fetch error ({start}–{chunk_end}): {e}"
+            time.sleep(SLEEP_BETWEEN_CHUNKS)
 
-    try:
-        scrape_state.total_tickers = util.get_ticker_count()
-        scrape_state.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        scrape_state.completed_at = None
-        scrape_state.processed_tickers = 0
-        scrape_state.last_error = None
+        if raw is None:
+            # Ticker not recognised by yfinance — stop processing it
+            return ticker_sym, chunks_saved, "not found in yfinance"
 
-        print(f"Total number of tickers to scrape: {scrape_state.total_tickers}")
-        start_ticker = 0
+        rows = util.transform_chunk(raw, ticker_id)
+        if rows:
+            try:
+                util.save_batch(rows)
+            except Exception as e:
+                return ticker_sym, chunks_saved, f"save error ({start}–{chunk_end}): {e}"
+            chunks_saved += 1
 
-        while start_ticker < scrape_state.total_tickers and not scrape_state.should_stop:
-            # Grab 10 tickers at a time
-            tickers = util.get_tickers(start_ticker, 10)
-            print(f"\nProcessing Batch: {tickers}")
-            start_ticker += 10
+        start = chunk_end + timedelta(days=1)
 
-            for ticker in tickers:
-                if scrape_state.should_stop:
-                    break
-
-                scrape_state.current_ticker = ticker
-
-                try:
-                    check_period, latest_date = util.get_period(ticker)
-
-                    if check_period is None:
-                        print(f"{ticker} returns no period - probably not in yfinance system, skipping!")
-                        scrape_state.processed_tickers += 1
-                        continue
-                    if check_period == '0d':
-                        print(f"{ticker} returns 0d period - already updated today")
-                        scrape_state.processed_tickers += 1
-                        continue
-
-                    payload, response_code = util.get_history(ticker, check_period)
-
-                    if response_code == 200:
-                        if payload == "Ticker Not Found":
-                            print(f"{ticker}: Not Found")
-                        else:
-                            transformed_payload = util.transform_payload(payload, ticker, latest_date)
-                            message, status_code = util.save_batch_history(transformed_payload)
-                            if status_code == 201:
-                                print(f"{ticker}: successfully saved - period: {check_period}")
-                            else:
-                                print(f"{ticker}: Error saving to database")
-                                scrape_state.last_error = f"{ticker}: Database save failed"
-                    else:
-                        print(f"{ticker}: Error scraping YFinance")
-                        scrape_state.last_error = f"{ticker}: YFinance scrape failed"
-
-                except Exception as e:
-                    print(f"{ticker}: Error - {str(e)}")
-                    scrape_state.last_error = f"{ticker}: {str(e)}"
-
-                scrape_state.processed_tickers += 1
-                time.sleep(5)  # Rate limiting
-
-    except Exception as e:
-        scrape_state.last_error = str(e)
-        print(f"Scrape job error: {e}")
-    finally:
-        scrape_state.is_running = False
-        scrape_state.current_ticker = None
-        scrape_state.completed_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        print("Scrape job completed")
+    return ticker_sym, chunks_saved, None
 
 
 def main():
-    print("Scraper Manager CronJob Starting")
+    print("Scraper Manager starting")
+
     try:
-        run_scrape_job()
-        if scrape_state.last_error:
-            print(f"Scrape completed with errors. Last error: {scrape_state.last_error}")
-        print(f"Processed {scrape_state.processed_tickers}/{scrape_state.total_tickers} tickers")
-        sys.exit(0)
+        tickers = util.get_tickers_needing_update()
     except Exception as e:
-        print(f"Fatal error in scrape job: {e}")
+        print(f"Fatal: could not fetch update status — {e}")
         sys.exit(1)
+
+    print(f"{len(tickers)} tickers need updating")
+    if not tickers:
+        print("Nothing to do.")
+        sys.exit(0)
+
+    errors = []
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(update_ticker, t): t["ticker"] for t in tickers}
+        for future in as_completed(futures):
+            sym, chunks, err = future.result()
+            completed += 1
+            if err:
+                print(f"[{completed}/{len(tickers)}] {sym}: {err}")
+                errors.append(f"{sym}: {err}")
+            else:
+                print(f"[{completed}/{len(tickers)}] {sym}: {chunks} chunk(s) saved")
+
+    if errors:
+        print(f"\nCompleted with {len(errors)} error(s):")
+        for e in errors:
+            print(f"  {e}")
+        sys.exit(1)
+
+    print("Scraper Manager complete")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
