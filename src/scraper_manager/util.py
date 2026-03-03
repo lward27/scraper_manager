@@ -14,6 +14,19 @@ def get_tickers_needing_update() -> list[dict]:
     return [t for t in r.json() if date.fromisoformat(t["last_date"]) < yesterday]
 
 
+def fetch_max(ticker: str) -> dict | None:
+    """Fetch the full available history for a ticker using period=max. Returns None on 404."""
+    r = requests.get(
+        f"{YFINANCE_SERVICE_URL}/history",
+        params={"ticker_name": ticker, "period": "max"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
 def fetch_chunk(ticker: str, start: date, end: date) -> dict | None:
     """Fetch one date-range window from yfinance. Returns raw OHLCV dict or None on 404."""
     r = requests.get(

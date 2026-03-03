@@ -7,7 +7,6 @@ from scraper_manager import util
 
 CHUNK_DAYS = 90
 MAX_WORKERS = 8
-START_OF_HISTORY = date(2000, 1, 1)
 
 # Cap simultaneous yfinance calls to avoid overwhelming the wrapper
 _yfinance_semaphore = threading.Semaphore(4)
@@ -15,18 +14,46 @@ SLEEP_BETWEEN_CHUNKS = 1.5  # seconds, inside the semaphore
 
 
 def update_ticker(ticker_info: dict) -> tuple[str, int, str | None]:
-    """Fetch and store all missing price history for one ticker in 90-day chunks.
+    """Fetch and store all missing price history for one ticker.
 
-    Returns (ticker_symbol, chunks_saved, error_message_or_None).
+    New tickers (no prior data): single period=max call — avoids 404s from
+    requesting date ranges before the ticker was listed.
+    Existing tickers: 90-day chunks from last_date+1 to yesterday; a 404 on a
+    chunk means no data in that window (e.g. trading halt) — skip and continue.
+
+    Returns (ticker_symbol, rows_saved, error_message_or_None).
     """
     ticker_id  = ticker_info["ticker_id"]
     ticker_sym = ticker_info["ticker"]
     last_date  = date.fromisoformat(ticker_info["last_date"])
     yesterday  = date.today() - timedelta(days=1)
 
-    start = START_OF_HISTORY if last_date <= date(1900, 1, 2) else last_date + timedelta(days=1)
+    is_new = last_date <= date(1900, 1, 2)
+
+    if is_new:
+        with _yfinance_semaphore:
+            try:
+                raw = util.fetch_max(ticker_sym)
+            except Exception as e:
+                return ticker_sym, 0, f"fetch error (max): {e}"
+            time.sleep(SLEEP_BETWEEN_CHUNKS)
+
+        if raw is None:
+            return ticker_sym, 0, "not found in yfinance"
+
+        rows = util.transform_chunk(raw, ticker_id)
+        if not rows:
+            return ticker_sym, 0, None
+        try:
+            util.save_batch(rows)
+        except Exception as e:
+            return ticker_sym, 0, f"save error (max): {e}"
+        return ticker_sym, len(rows), None
+
+    # Incremental update: chunk from last_date+1 to yesterday
+    start = last_date + timedelta(days=1)
     end   = yesterday
-    chunks_saved = 0
+    rows_saved = 0
 
     while start <= end:
         chunk_end = min(start + timedelta(days=CHUNK_DAYS), end)
@@ -35,24 +62,21 @@ def update_ticker(ticker_info: dict) -> tuple[str, int, str | None]:
             try:
                 raw = util.fetch_chunk(ticker_sym, start, chunk_end)
             except Exception as e:
-                return ticker_sym, chunks_saved, f"fetch error ({start}–{chunk_end}): {e}"
+                return ticker_sym, rows_saved, f"fetch error ({start}–{chunk_end}): {e}"
             time.sleep(SLEEP_BETWEEN_CHUNKS)
 
-        if raw is None:
-            # Ticker not recognised by yfinance — stop processing it
-            return ticker_sym, chunks_saved, "not found in yfinance"
-
-        rows = util.transform_chunk(raw, ticker_id)
-        if rows:
-            try:
-                util.save_batch(rows)
-            except Exception as e:
-                return ticker_sym, chunks_saved, f"save error ({start}–{chunk_end}): {e}"
-            chunks_saved += 1
+        if raw is not None:
+            rows = util.transform_chunk(raw, ticker_id)
+            if rows:
+                try:
+                    util.save_batch(rows)
+                except Exception as e:
+                    return ticker_sym, rows_saved, f"save error ({start}–{chunk_end}): {e}"
+                rows_saved += len(rows)
 
         start = chunk_end + timedelta(days=1)
 
-    return ticker_sym, chunks_saved, None
+    return ticker_sym, rows_saved, None
 
 
 def main():
@@ -81,7 +105,7 @@ def main():
                 print(f"[{completed}/{len(tickers)}] {sym}: {err}")
                 errors.append(f"{sym}: {err}")
             else:
-                print(f"[{completed}/{len(tickers)}] {sym}: {chunks} chunk(s) saved")
+                print(f"[{completed}/{len(tickers)}] {sym}: {chunks} row(s) saved")
 
     if errors:
         print(f"\nCompleted with {len(errors)} error(s):")
