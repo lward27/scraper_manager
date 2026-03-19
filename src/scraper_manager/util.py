@@ -4,11 +4,13 @@ from scraper_manager.config import DATABASE_SERVICE_URL, YFINANCE_SERVICE_URL
 
 REQUEST_TIMEOUT = 30
 BATCH_TIMEOUT = 60
+# Longer timeout for the initial status check which may query many tickers
+STATUS_CHECK_TIMEOUT = 120
 
 
 def get_tickers_needing_update() -> list[dict]:
     """Single DB call: returns all tickers whose last price_history date is before yesterday."""
-    r = requests.get(f"{DATABASE_SERVICE_URL}/tickers/update-status", timeout=REQUEST_TIMEOUT)
+    r = requests.get(f"{DATABASE_SERVICE_URL}/tickers/update-status", timeout=STATUS_CHECK_TIMEOUT)
     r.raise_for_status()
     yesterday = date.today() - timedelta(days=1)
     return [t for t in r.json() if date.fromisoformat(t["last_date"]) < yesterday]
