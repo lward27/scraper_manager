@@ -4,8 +4,8 @@ from scraper_manager.config import DATABASE_SERVICE_URL, YFINANCE_SERVICE_URL
 
 REQUEST_TIMEOUT = 30
 BATCH_TIMEOUT = 60
-# Longer timeout for the initial status check which may query many tickers
-STATUS_CHECK_TIMEOUT = 120
+# Much longer timeout for the initial status check - query is expensive with 5647 tickers
+STATUS_CHECK_TIMEOUT = 600
 
 
 def get_tickers_needing_update() -> list[dict]:
