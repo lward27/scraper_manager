@@ -1,6 +1,7 @@
 import sys
 import time
 import threading
+import random
 from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scraper_manager import util
@@ -11,6 +12,7 @@ MAX_WORKERS = 8
 # Cap simultaneous yfinance calls to avoid overwhelming the wrapper
 _yfinance_semaphore = threading.Semaphore(4)
 SLEEP_BETWEEN_CHUNKS = 1.5  # seconds, inside the semaphore
+SLEEP_JITTER = 0.5  # +/- jitter to avoid predictable patterns
 
 
 def update_ticker(ticker_info: dict) -> tuple[str, int, str | None]:
@@ -36,7 +38,9 @@ def update_ticker(ticker_info: dict) -> tuple[str, int, str | None]:
                 raw = util.fetch_max(ticker_sym)
             except Exception as e:
                 return ticker_sym, 0, f"fetch error (max): {e}"
-            time.sleep(SLEEP_BETWEEN_CHUNKS)
+            # Add jitter to sleep to avoid predictable patterns
+            sleep_time = SLEEP_BETWEEN_CHUNKS + random.uniform(-SLEEP_JITTER, SLEEP_JITTER)
+            time.sleep(max(0, sleep_time))
 
         if raw is None:
             return ticker_sym, 0, "not found in yfinance"
@@ -63,7 +67,9 @@ def update_ticker(ticker_info: dict) -> tuple[str, int, str | None]:
                 raw = util.fetch_chunk(ticker_sym, start, chunk_end)
             except Exception as e:
                 return ticker_sym, rows_saved, f"fetch error ({start}–{chunk_end}): {e}"
-            time.sleep(SLEEP_BETWEEN_CHUNKS)
+            # Add jitter to sleep to avoid predictable patterns
+            sleep_time = SLEEP_BETWEEN_CHUNKS + random.uniform(-SLEEP_JITTER, SLEEP_JITTER)
+            time.sleep(max(0, sleep_time))
 
         if raw is not None:
             rows = util.transform_chunk(raw, ticker_id)
