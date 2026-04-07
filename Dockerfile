@@ -1,12 +1,21 @@
 FROM python:3.11-slim
-USER root
+
 WORKDIR /app
 
+# Install dependencies first for better layer caching
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source and install package
 COPY src/setup.py .
 COPY src/scraper_manager ./scraper_manager
+RUN pip install --no-cache-dir .
 
-RUN pip install -r requirements.txt --user
-RUN pip install . --user
+# Non-root user for security
+RUN useradd --create-home --shell /bin/bash app
+USER app
 
-ENTRYPOINT [ "python", "-m", "scraper_manager" ]
+# Health check port
+EXPOSE 8080
+
+ENTRYPOINT ["python", "-m", "scraper_manager"]
