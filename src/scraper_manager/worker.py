@@ -116,24 +116,33 @@ class WorkerService:
             await message.ack()
         except Exception as exc:
             metrics.counters["scraper_tickers_failed"].inc()
-            if task.attempt < self.config.worker.max_retries:
-                next_task = task.next_attempt()
-                delay_seconds = self._retry_delay_seconds(task.attempt)
-                await self.rabbitmq.publish_retry(next_task.to_dict(), delay_seconds, str(exc))
-                metrics.counters["scraper_queue_retried_total"].inc()
-                log.logger.warning(
-                    "Retry scheduled for %s attempt=%s delay=%.1fs error=%s",
+            try:
+                if task.attempt < self.config.worker.max_retries:
+                    next_task = task.next_attempt()
+                    delay_seconds = self._retry_delay_seconds(task.attempt)
+                    await self.rabbitmq.publish_retry(next_task.to_dict(), delay_seconds, str(exc))
+                    metrics.counters["scraper_queue_retried_total"].inc()
+                    log.logger.warning(
+                        "Retry scheduled for %s attempt=%s delay=%.1fs error=%s",
+                        task.ticker,
+                        next_task.attempt,
+                        delay_seconds,
+                        exc,
+                    )
+                else:
+                    await self.rabbitmq.publish_dlq(task.to_dict(), str(exc))
+                    metrics.counters["scraper_queue_dlq_total"].inc()
+                    await self._record_progress(run_id=task.run_id, failed_delta=1, dlq_delta=1)
+                    log.logger.error("DLQ published for %s after retries: %s", task.ticker, exc)
+                await message.ack()
+            except Exception as publish_exc:
+                log.logger.error(
+                    "Failed to route failed message for %s (attempt=%s), requeueing original: %s",
                     task.ticker,
-                    next_task.attempt,
-                    delay_seconds,
-                    exc,
+                    task.attempt,
+                    publish_exc,
                 )
-            else:
-                await self.rabbitmq.publish_dlq(task.to_dict(), str(exc))
-                metrics.counters["scraper_queue_dlq_total"].inc()
-                await self._record_progress(run_id=task.run_id, failed_delta=1, dlq_delta=1)
-                log.logger.error("DLQ published for %s after retries: %s", task.ticker, exc)
-            await message.ack()
+                await message.nack(requeue=True)
         finally:
             metrics.gauges["scraper_active_workers"].dec()
 

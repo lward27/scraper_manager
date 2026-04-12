@@ -55,22 +55,51 @@ class HTTPClient:
                 request_timeout_obj = aiohttp.ClientTimeout(total=request_timeout)
 
                 if method == "GET":
-                    async with self.session.get(
-                        url, params=params, timeout=request_timeout_obj
-                    ) as response:
-                        if response.status == 404:
-                            return response
-                        if response.status >= 500 or response.status == 429:
-                            response.raise_for_status()
+                    response = await self.session.get(
+                        url,
+                        params=params,
+                        timeout=request_timeout_obj,
+                    )
+                    if response.status == 404:
                         return response
+                    if response.status >= 500 or response.status == 429:
+                        status = response.status
+                        message = await response.text()
+                        request_info = response.request_info
+                        history = response.history
+                        headers = response.headers
+                        response.release()
+                        raise ClientResponseError(
+                            request_info=request_info,
+                            history=history,
+                            status=status,
+                            message=message,
+                            headers=headers,
+                        )
+                    return response
 
                 if method == "POST":
-                    async with self.session.post(
-                        url, params=params, json=json_body, timeout=request_timeout_obj
-                    ) as response:
-                        if response.status >= 500 or response.status == 429:
-                            response.raise_for_status()
-                        return response
+                    response = await self.session.post(
+                        url,
+                        params=params,
+                        json=json_body,
+                        timeout=request_timeout_obj,
+                    )
+                    if response.status >= 500 or response.status == 429:
+                        status = response.status
+                        message = await response.text()
+                        request_info = response.request_info
+                        history = response.history
+                        headers = response.headers
+                        response.release()
+                        raise ClientResponseError(
+                            request_info=request_info,
+                            history=history,
+                            status=status,
+                            message=message,
+                            headers=headers,
+                        )
+                    return response
 
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
@@ -115,8 +144,11 @@ class HTTPClient:
             },
             timeout=self.config.worker.status_check_timeout,
         )
-        response.raise_for_status()
-        return await response.json()
+        try:
+            response.raise_for_status()
+            return await response.json()
+        finally:
+            response.release()
 
     async def start_scraper_run(
         self,
@@ -136,8 +168,11 @@ class HTTPClient:
                 "shadow_mode": shadow_mode,
             },
         )
-        response.raise_for_status()
-        return await response.json()
+        try:
+            response.raise_for_status()
+            return await response.json()
+        finally:
+            response.release()
 
     async def update_scraper_run_progress(
         self,
@@ -159,6 +194,7 @@ class HTTPClient:
             },
         )
         response.raise_for_status()
+        response.release()
 
     async def complete_scraper_run(self, run_id: str, status: str) -> None:
         url = f"{self.config.services.database_service_url}/scraper-runs/{run_id}/complete"
@@ -168,6 +204,7 @@ class HTTPClient:
             json_body={"status": status},
         )
         response.raise_for_status()
+        response.release()
 
     async def fetch_yfinance(
         self,
@@ -195,10 +232,14 @@ class HTTPClient:
 
             if response.status == 404:
                 ticker_log.logger.info("No yfinance data found")
+                response.release()
                 return None
 
-            response.raise_for_status()
-            return await response.json()
+            try:
+                response.raise_for_status()
+                return await response.json()
+            finally:
+                response.release()
         except Exception as exc:
             metrics.counters["scraper_api_errors_total"].inc()
             ticker_log.logger.error("Fetch failed: %s", exc)
@@ -224,6 +265,7 @@ class HTTPClient:
                         timeout=self.config.worker.batch_timeout,
                     )
                     response.raise_for_status()
+                    response.release()
                 metrics.counters["scraper_rows_saved"].inc(len(chunk))
             except Exception:
                 metrics.counters["scraper_db_errors_total"].inc()

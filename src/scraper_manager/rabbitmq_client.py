@@ -62,7 +62,7 @@ class RabbitMQClient:
             body=json.dumps(payload).encode("utf-8"),
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
             content_type="application/json",
-            expiration=str(expiration_ms) if expiration_ms is not None else None,
+            expiration=expiration_ms,
             headers=headers or {},
         )
 
