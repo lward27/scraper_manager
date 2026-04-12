@@ -110,7 +110,10 @@ class MetricsRegistry:
 
     def histogram(self, name: str, description: str, buckets: Optional[list[float]] = None) -> Histogram:
         if name not in self.histograms:
-            self.histograms[name] = Histogram(name=name, description=description, buckets=buckets or [])
+            if buckets is None:
+                self.histograms[name] = Histogram(name=name, description=description)
+            else:
+                self.histograms[name] = Histogram(name=name, description=description, buckets=buckets)
         return self.histograms[name]
 
     def render_prometheus(self) -> str:
@@ -138,6 +141,11 @@ metrics.counter("scraper_api_errors_total", "Total API errors", labels={"service
 metrics.counter("scraper_db_writes_total", "Total database write operations")
 metrics.counter("scraper_db_errors_total", "Total database write errors")
 metrics.counter("scraper_circuit_breaker_trips", "Number of times circuit breaker tripped")
+metrics.counter("scraper_queue_published_total", "Total messages published to work queue")
+metrics.counter("scraper_queue_consumed_total", "Total messages consumed from work queue")
+metrics.counter("scraper_queue_retried_total", "Total messages sent to retry queue")
+metrics.counter("scraper_queue_dlq_total", "Total messages sent to dead-letter queue")
+metrics.counter("scraper_queue_invalid_messages_total", "Total invalid queue messages rejected")
 
 metrics.gauge("scraper_active_workers", "Number of currently active worker tasks")
 metrics.gauge("scraper_queue_depth", "Number of tickers waiting to be processed")
@@ -145,6 +153,7 @@ metrics.gauge("scraper_queue_depth", "Number of tickers waiting to be processed"
 metrics.histogram("scraper_fetch_duration_seconds", "Duration of yfinance fetch calls")
 metrics.histogram("scraper_save_duration_seconds", "Duration of database save operations")
 metrics.histogram("scraper_ticker_duration_seconds", "Total duration to process a single ticker")
+metrics.histogram("scraper_queue_lag_seconds", "Queue lag between enqueue and consume")
 
 
 class Timer:

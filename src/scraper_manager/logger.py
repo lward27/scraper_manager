@@ -75,6 +75,7 @@ def get_logger(
     """
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    logger.propagate = False
 
     # Avoid duplicate handlers
     if not logger.handlers:
