@@ -22,6 +22,12 @@ def _as_int_list(value: str, default: list[int]) -> list[int]:
     return result if result else default
 
 
+class ConfigValidationError(ValueError):
+    """Raised when a configuration value fails startup validation."""
+
+    pass
+
+
 @dataclass
 class ServiceConfig:
     database_service_url: str = field(
@@ -76,6 +82,19 @@ class WorkerConfig:
 
 
 @dataclass
+class ConcurrencyConfig:
+    max_concurrent_yfinance_calls: int = field(
+        default_factory=lambda: int(os.getenv("MAX_CONCURRENT_YFINANCE_CALLS", "4"))
+    )
+    max_concurrent_db_calls: int = field(
+        default_factory=lambda: int(os.getenv("MAX_CONCURRENT_DB_CALLS", "4"))
+    )
+    max_workers: int = field(
+        default_factory=lambda: int(os.getenv("MAX_WORKERS", "8"))
+    )
+
+
+@dataclass
 class RuntimeConfig:
     mode: str = field(default_factory=lambda: os.getenv("MODE", "worker").strip().lower())
     shadow_mode: bool = field(default_factory=lambda: _as_bool(os.getenv("SHADOW_MODE", "true"), True))
@@ -94,8 +113,48 @@ class Config:
     queue: QueueConfig = field(default_factory=QueueConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
+    concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+
+    def validate(self) -> None:
+        """Pure, deterministic startup validation.
+
+        Raises ConfigValidationError with a stable field-specific message
+        for the first violation encountered.
+        """
+        if self.queue.prefetch_count <= 0:
+            raise ConfigValidationError(
+                "RABBITMQ_PREFETCH_COUNT must be a positive integer"
+            )
+        if self.scheduler.page_size <= 0:
+            raise ConfigValidationError(
+                "SCHEDULER_PAGE_SIZE must be a positive integer"
+            )
+        if not (0 <= self.scheduler.run_hour <= 23):
+            raise ConfigValidationError(
+                "SCHEDULER_RUN_HOUR must be between 0 and 23 inclusive"
+            )
+        if not (0 <= self.scheduler.run_minute <= 59):
+            raise ConfigValidationError(
+                "SCHEDULER_RUN_MINUTE must be between 0 and 59 inclusive"
+            )
+        if self.worker.max_retries <= 0:
+            raise ConfigValidationError(
+                "WORKER_MAX_RETRIES must be a positive integer"
+            )
+        if self.concurrency.max_concurrent_yfinance_calls <= 0:
+            raise ConfigValidationError(
+                "MAX_CONCURRENT_YFINANCE_CALLS must be a positive integer"
+            )
+        if self.concurrency.max_concurrent_db_calls <= 0:
+            raise ConfigValidationError(
+                "MAX_CONCURRENT_DB_CALLS must be a positive integer"
+            )
+        if self.concurrency.max_workers <= 0:
+            raise ConfigValidationError(
+                "MAX_WORKERS must be a positive integer"
+            )
 
     @classmethod
     def from_env(cls) -> "Config":

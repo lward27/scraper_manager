@@ -34,7 +34,7 @@ Queue-driven stock data pipeline for the Lucas Engineering finance stack.
 - `RABBITMQ_WORK_QUEUE`
 - `RABBITMQ_RETRY_QUEUE`
 - `RABBITMQ_DLQ_QUEUE`
-- `RABBITMQ_PREFETCH_COUNT`
+- `RABBITMQ_PREFETCH_COUNT` — must be a positive integer
 - `LOG_LEVEL`
 - `LOG_FORMAT`
 - `HEALTH_PORT`
@@ -42,11 +42,11 @@ Queue-driven stock data pipeline for the Lucas Engineering finance stack.
 ### Scheduler
 
 - `SCHEDULER_TIMEZONE` (default: `America/New_York`)
-- `SCHEDULER_RUN_HOUR` (default: `19`)
-- `SCHEDULER_RUN_MINUTE` (default: `0`)
+- `SCHEDULER_RUN_HOUR` (default: `19`) — must be between 0 and 23 inclusive
+- `SCHEDULER_RUN_MINUTE` (default: `0`) — must be between 0 and 59 inclusive
 - `SCHEDULER_WEEKDAYS` (default: `0,1,2,3,4`)
 - `SCHEDULER_POLL_SECONDS` (default: `30`)
-- `SCHEDULER_PAGE_SIZE` (default: `500`)
+- `SCHEDULER_PAGE_SIZE` (default: `500`) — must be a positive integer
 
 ### Worker
 
@@ -55,9 +55,19 @@ Queue-driven stock data pipeline for the Lucas Engineering finance stack.
 - `REQUEST_TIMEOUT`
 - `BATCH_TIMEOUT`
 - `STATUS_CHECK_TIMEOUT`
-- `WORKER_MAX_RETRIES`
+- `WORKER_MAX_RETRIES` — must be a positive integer (zero and negative values are rejected with the stable error: `WORKER_MAX_RETRIES must be a positive integer`)
 - `WORKER_RETRY_BASE_DELAY_SECONDS`
 - `WORKER_RETRY_MAX_DELAY_SECONDS`
+
+### Concurrency
+
+- `MAX_CONCURRENT_YFINANCE_CALLS` (default: `4`) — must be a positive integer
+- `MAX_CONCURRENT_DB_CALLS` (default: `4`) — must be a positive integer
+- `MAX_WORKERS` (default: `8`) — must be a positive integer
+
+## Startup Validation
+
+All configuration values are validated immediately after `Config.from_env()` returns and before any downstream service (logger, health server, HTTP client, RabbitMQ, scheduler, or worker) is started. Validation is pure, deterministic, and side-effect free. The first violation encountered raises a `ConfigValidationError` with a stable field-specific message, causing a clean early exit with the error logged to stderr.
 
 ## Local Run
 
