@@ -41,6 +41,12 @@ async def _run_service(config: Config, shutdown_event: asyncio.Event) -> None:
 def main() -> None:
     config = Config.from_env()
 
+    try:
+        config.validate()
+    except Exception as exc:
+        print(f"Configuration validation failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     global log
     log = get_logger(
         "scraper_manager",
