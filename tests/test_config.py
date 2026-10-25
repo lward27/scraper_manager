@@ -206,3 +206,35 @@ class TestStartupSequence:
             main_module.main()
 
         assert exc_info.value.code == 1
+
+class TestDatabaseServiceTokenValidation:
+    def test_token_optional_in_shadow_mode(self):
+        config = Config()
+        config.runtime.shadow_mode = True
+        config.services.database_service_token = ""
+        config.validate()
+
+    def test_token_required_when_writing(self):
+        config = Config()
+        config.runtime.shadow_mode = False
+        config.services.database_service_token = ""
+        with pytest.raises(ConfigValidationError) as exc_info:
+            config.validate()
+        assert "DATABASE_SERVICE_TOKEN must be at least 32 characters when SHADOW_MODE=false" in str(exc_info.value)
+
+    def test_short_token_rejected_when_writing(self):
+        config = Config()
+        config.runtime.shadow_mode = False
+        config.services.database_service_token = "x" * 31
+        with pytest.raises(ConfigValidationError):
+            config.validate()
+
+    def test_token_accepted_when_writing(self):
+        config = Config()
+        config.runtime.shadow_mode = False
+        config.services.database_service_token = "x" * 32
+        config.validate()
+
+    def test_token_read_from_environment(self):
+        with patch.dict(os.environ, {"DATABASE_SERVICE_TOKEN": "y" * 40}):
+            assert Config().services.database_service_token == "y" * 40
