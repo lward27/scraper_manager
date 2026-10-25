@@ -42,6 +42,7 @@ class HTTPClient:
         method: str = "GET",
         json_body: Optional[dict] = None,
         timeout: Optional[int] = None,
+        headers: Optional[dict] = None,
     ) -> aiohttp.ClientResponse:
         max_retries = self.config.worker.max_retries
         base_delay = self.config.worker.retry_base_delay_seconds
@@ -58,6 +59,7 @@ class HTTPClient:
                     response = await self.session.get(
                         url,
                         params=params,
+                        headers=headers,
                         timeout=request_timeout_obj,
                     )
                     if response.status == 404:
@@ -83,6 +85,7 @@ class HTTPClient:
                         url,
                         params=params,
                         json=json_body,
+                        headers=headers,
                         timeout=request_timeout_obj,
                     )
                     if response.status >= 500 or response.status == 429:
@@ -128,6 +131,11 @@ class HTTPClient:
             raise last_exception
         raise RuntimeError(f"No response and no exception for {url}")
 
+    def _database_headers(self) -> Optional[dict]:
+        # Only database-service calls carry the credential; yfinance must never see it.
+        token = self.config.services.database_service_token
+        return {"Authorization": f"Bearer {token}"} if token else None
+
     async def get_stale_tickers(
         self,
         target_date: date,
@@ -143,6 +151,7 @@ class HTTPClient:
                 "limit": limit,
             },
             timeout=self.config.worker.status_check_timeout,
+            headers=self._database_headers(),
         )
         try:
             response.raise_for_status()
@@ -167,6 +176,7 @@ class HTTPClient:
                 "mode": mode,
                 "shadow_mode": shadow_mode,
             },
+            headers=self._database_headers(),
         )
         try:
             response.raise_for_status()
@@ -192,6 +202,7 @@ class HTTPClient:
                 "failed_delta": failed_delta,
                 "dlq_delta": dlq_delta,
             },
+            headers=self._database_headers(),
         )
         response.raise_for_status()
         response.release()
@@ -202,6 +213,7 @@ class HTTPClient:
             url,
             method="POST",
             json_body={"status": status},
+            headers=self._database_headers(),
         )
         response.raise_for_status()
         response.release()
@@ -263,6 +275,7 @@ class HTTPClient:
                         method="POST",
                         json_body=chunk,
                         timeout=self.config.worker.batch_timeout,
+                        headers=self._database_headers(),
                     )
                     response.raise_for_status()
                     response.release()

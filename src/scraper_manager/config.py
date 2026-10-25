@@ -36,6 +36,10 @@ class ServiceConfig:
             "http://finance-app-database-service.apps-prod.svc.cluster.local:8091",
         )
     )
+    database_service_token: str = field(
+        default_factory=lambda: os.getenv("DATABASE_SERVICE_TOKEN", ""),
+        repr=False,
+    )
     yfinance_service_url: str = field(
         default_factory=lambda: os.getenv(
             "YFINANCE_SERVICE_URL",
@@ -123,6 +127,10 @@ class Config:
         Raises ConfigValidationError with a stable field-specific message
         for the first violation encountered.
         """
+        if not self.runtime.shadow_mode and len(self.services.database_service_token) < 32:
+            raise ConfigValidationError(
+                "DATABASE_SERVICE_TOKEN must be at least 32 characters when SHADOW_MODE=false"
+            )
         if self.queue.prefetch_count <= 0:
             raise ConfigValidationError(
                 "RABBITMQ_PREFETCH_COUNT must be a positive integer"

@@ -29,6 +29,7 @@ Queue-driven stock data pipeline for the Lucas Engineering finance stack.
 - `MODE`: `scheduler` or `worker`
 - `SHADOW_MODE`: `true|false` (when `true`, workers fetch/transform but skip DB writes)
 - `DATABASE_SERVICE_URL`
+- `DATABASE_SERVICE_TOKEN`: database-service write credential, at least 32 characters; required when `SHADOW_MODE=false` and never sent to yfinance
 - `YFINANCE_SERVICE_URL`
 - `RABBITMQ_URL`
 - `RABBITMQ_WORK_QUEUE`
